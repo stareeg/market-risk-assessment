@@ -27,6 +27,7 @@ STAGES = [
     ("var",      5, "Monte Carlo, VaR и ES",           True,  "Егор"),
     ("backtest", 6, "Бэктестинг",                      True,  "Вика"),
     ("tests",    7, "Статистические тесты VaR",        True,  "Настя"),
+    ("bonus",    8, "Опционы и облигации с опционами",  True,  "Настя"),
 ]
 
 
@@ -67,6 +68,11 @@ def _run_tests() -> None:
     tests.run()
 
 
+def _run_bonus() -> None:
+    from bonus import pipeline
+    pipeline.run()
+
+
 # Готовые этапы. Ключ это функция запуска. Остальные пока не реализованы.
 STAGE_RUNNERS = {
     "data": _run_data,
@@ -76,6 +82,7 @@ STAGE_RUNNERS = {
     "var": _run_var,
     "backtest": _run_backtest,
     "tests": _run_tests,
+    "bonus": _run_bonus,
 }
 
 
