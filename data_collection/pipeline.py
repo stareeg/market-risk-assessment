@@ -31,6 +31,79 @@ def _make_saver(data_dir: Path):
     return save_parquet
 
 
+def _plot_series_overview(indices_history: pd.DataFrame, fx: pd.DataFrame,
+                          out_dir: Path) -> Path:
+    """
+    Обзор собранных рядов: индекс МосБиржи и курс доллара за весь период.
+    Два ряда с разными единицами рисуем на двух осях. Видно общую динамику рынка
+    и то, что данные покрывают весь интервал 2021-2026.
+    """
+    import matplotlib.pyplot as plt
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    imoex = (indices_history[indices_history["SECID"] == "IMOEX"]
+             .sort_values("TRADEDATE"))
+    usd = fx[fx["CCY"] == "USD"].sort_values("DATE")
+
+    fig, ax1 = plt.subplots()
+    ax1.plot(imoex["TRADEDATE"], imoex["CLOSE"], color=COLORS["main"], linewidth=1.6,
+             label="Индекс МосБиржи")
+    ax1.set_ylabel("Индекс МосБиржи, пункты", color=COLORS["main"])
+    ax1.tick_params(axis="y", labelcolor=COLORS["main"])
+    ax1.set_xlabel("Год")
+
+    ax2 = ax1.twinx()
+    ax2.spines["top"].set_visible(False)
+    ax2.plot(usd["DATE"], usd["RATE"], color=COLORS["accent"], linewidth=1.6,
+             label="Курс доллара ЦБ")
+    ax2.set_ylabel("Доллар США, руб", color=COLORS["accent"])
+    ax2.tick_params(axis="y", labelcolor=COLORS["accent"])
+    ax2.grid(False)
+
+    ax1.set_title("Собранные ряды: индекс МосБиржи и курс доллара")
+    return save_slide(fig, "data_series_overview", out_dir)
+
+
+def _plot_moex_halt(indices_history: pd.DataFrame, out_dir: Path) -> Path:
+    """
+    Разрыв в данных на остановке торгов MOEX весной 2022.
+    Берём окно вокруг события и подсвечиваем самый длинный промежуток без торгов:
+    биржа была закрыта с конца февраля до конца марта, поэтому в индексе зияет дыра.
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    imoex = (indices_history[indices_history["SECID"] == "IMOEX"]
+             .sort_values("TRADEDATE"))
+    win = imoex[(imoex["TRADEDATE"] >= "2022-01-01") &
+                (imoex["TRADEDATE"] <= "2022-05-15")].reset_index(drop=True)
+
+    # Самый длинный промежуток между соседними торговыми днями это и есть остановка.
+    gaps = win["TRADEDATE"].diff()
+    j = int(gaps.iloc[1:].idxmax())
+    halt_start = win.loc[j - 1, "TRADEDATE"]
+    halt_end = win.loc[j, "TRADEDATE"]
+    n_days = (halt_end - halt_start).days
+
+    fig, ax = plt.subplots()
+    ax.plot(win["TRADEDATE"], win["CLOSE"], color=COLORS["main"], linewidth=1.8,
+            marker="o", markersize=3)
+    ax.axvspan(halt_start, halt_end, color=COLORS["accent"], alpha=0.15)
+    mid = halt_start + (halt_end - halt_start) / 2
+    ax.text(mid, win["CLOSE"].max(), f"торги закрыты\n{n_days} дней",
+            ha="center", va="top", color=COLORS["accent"])
+    ax.set_title("Остановка торгов MOEX весной 2022, разрыв в данных")
+    ax.set_xlabel("Дата")
+    ax.set_ylabel("Индекс МосБиржи, пункты")
+    # Метки по первым числам месяцев, иначе подписи дат наезжают.
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m.%Y"))
+    return save_slide(fig, "data_moex_halt", out_dir)
+
+
 def run(data_dir: str | Path | None = None) -> None:
     """
     Качает все данные пункта 1 и сохраняет в data_dir.
@@ -170,6 +243,13 @@ def run(data_dir: str | Path | None = None) -> None:
     chain = chain.sort_values(["OPTIONTYPE", "STRIKE"]).reset_index(drop=True)
     print(f"  опционов в цепочке: {len(chain)}")
     save_parquet(chain, f"forts_options_chain_{C.FORTS_TRADE_DAY}")
+
+    # Графики для слайдов: обзор рядов и видимый разрыв на остановке торгов 2022.
+    fig_dir = C.PROJECT_DIR / "docs" / "figures"
+    p1 = _plot_series_overview(indices_history, fx, fig_dir)
+    p2 = _plot_moex_halt(indices_history, fig_dir)
+    print(f"\nГрафик обзора рядов: {p1}")
+    print(f"График остановки торгов 2022: {p2}")
 
     # Короткий итог по сохранённым файлам
     print("\nИтог, сохранённые файлы:")

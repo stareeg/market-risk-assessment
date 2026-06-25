@@ -36,6 +36,73 @@ def _show(title: str, df: pd.DataFrame, ndigits: int = 4) -> None:
     print(out.to_string())
 
 
+def _plot_scree(scree_y: pd.Series, scree_e: pd.Series, out_dir: Path) -> Path:
+    """
+    Scree-график PCA для кривой и для акций.
+    По каждой панели столбики это доля дисперсии на компоненту, линия это
+    накопленная доля. Вертикаль на третьей компоненте: мы берём ровно три.
+    """
+    import matplotlib.pyplot as plt
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+    for ax, scree, title in (
+        (axes[0], scree_y, "Кривая доходности"),
+        (axes[1], scree_e, "Акции"),
+    ):
+        n = min(8, len(scree))
+        x = range(1, n + 1)
+        share = scree.values[:n] * 100.0
+        cum = scree.values[:n].cumsum() * 100.0
+        ax.bar(x, share, color=COLORS["main"], alpha=0.8, label="доля компоненты")
+        ax.plot(x, cum, color=COLORS["accent"], marker="o", linewidth=2,
+                label="накопленная доля")
+        ax.axvline(3, color=COLORS["grey"], linestyle="--", linewidth=1.5)
+        ax.set_title(title)
+        ax.set_xlabel("Номер компоненты")
+        ax.set_xticks(list(x))
+    axes[0].set_ylabel("Доля дисперсии, %")
+    axes[0].legend(loc="center right")
+    fig.suptitle("Scree-график PCA, берём по три компоненты", y=1.02)
+    return save_slide(fig, "factors_scree", out_dir)
+
+
+def _plot_tails(risk_factors: pd.DataFrame, out_dir: Path) -> Path:
+    """
+    Тяжёлые хвосты на примере самого тяжелохвостого фактора.
+    QQ-график стандартизованного фактора против нормального распределения: на
+    хвостах точки уходят от прямой, значит крайние движения случаются чаще, чем
+    предсказывает нормальное распределение. Это и есть обоснование выбора t в п.3.
+    """
+    import matplotlib.pyplot as plt
+    from scipy import stats
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    # Берём фактор с наибольшим эксцессом (самые тяжёлые хвосты).
+    kurt = risk_factors.kurtosis()
+    name = kurt.idxmax()
+    x = risk_factors[name].dropna()
+    z = (x - x.mean()) / x.std()
+
+    n = len(z)
+    p = (np.arange(1, n + 1) - 0.5) / n
+    theo = stats.norm.ppf(p)
+    samp = np.sort(z.values)
+
+    fig, ax = plt.subplots()
+    lim = max(abs(theo[0]), abs(theo[-1]), abs(samp[0]), abs(samp[-1]))
+    ax.plot([-lim, lim], [-lim, lim], color=COLORS["grey"], linestyle="--",
+            linewidth=1.5, label="нормальное распределение")
+    ax.scatter(theo, samp, s=14, color=COLORS["main"], label="фактор " + name)
+    ax.set_title(f"Тяжёлые хвосты фактора {name} (эксцесс {kurt[name]:.1f})")
+    ax.set_xlabel("Квантили нормального распределения")
+    ax.set_ylabel("Квантили фактора")
+    ax.legend(loc="upper left")
+    return save_slide(fig, "factors_tails", out_dir)
+
+
 def run(data_dir: str | Path | None = None) -> None:
     """
     Считает риск-факторы по данным из data_dir и сохраняет их туда же.
@@ -149,6 +216,13 @@ def run(data_dir: str | Path | None = None) -> None:
     # Недельная сезонность доходностей факторов (проверяем, что её почти нет)
     _show("Сезонность факторов по дням недели:",
           D.weekday_seasonality(risk_factors), ndigits=5)
+
+    # Графики для слайдов: scree PCA и тяжёлые хвосты.
+    fig_dir = C.PROJECT_DIR / "docs" / "figures"
+    p1 = _plot_scree(scree_y, scree_e, fig_dir)
+    p2 = _plot_tails(risk_factors, fig_dir)
+    print(f"\nГрафик scree PCA: {p1}")
+    print(f"График тяжёлых хвостов: {p2}")
 
     # Сохраняем итог и нагрузки PCA, понадобятся в пунктах 3-5
     rf_path = data_dir / "risk_factors.parquet"

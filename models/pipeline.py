@@ -34,6 +34,78 @@ def _show(title: str, df, ndigits: int = 4) -> None:
     print(out.to_string())
 
 
+# Представители трёх типов факторов для графика волатильности.
+_VOL_FACTORS = ["RATE_PC1", "EQ_PC1", "FX_USD"]
+
+
+def _plot_garch_vol(cond_vol: pd.DataFrame, out_dir: Path) -> Path:
+    """
+    Подогнанная условная волатильность GARCH во времени.
+    У факторов разные единицы (ставки в б.п., валюта в долях), поэтому каждую
+    волатильность делим на её среднее. Так видно общее: волатильность скачет
+    кластерами, ярче всего весной 2022. Это и ловит GARCH.
+    """
+    import matplotlib.pyplot as plt
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    colors = [COLORS["main"], COLORS["second"], COLORS["accent"]]
+    names = {"RATE_PC1": "ставки (RATE_PC1)", "EQ_PC1": "акции (EQ_PC1)",
+             "FX_USD": "валюта (FX_USD)"}
+
+    fig, ax = plt.subplots()
+    for col, color in zip(_VOL_FACTORS, colors):
+        v = cond_vol[col]
+        ax.plot(v.index, v / v.mean(), color=color, linewidth=1.4,
+                label=names.get(col, col))
+    ax.set_title("Условная волатильность GARCH относительно своей средней")
+    ax.set_xlabel("Год")
+    ax.set_ylabel("Волатильность к средней, разы")
+    ax.legend(loc="upper right")
+    return save_slide(fig, "models_garch_vol", out_dir)
+
+
+def _plot_t_vs_normal(std_resid: pd.DataFrame, params_df: pd.DataFrame,
+                      out_dir: Path) -> Path:
+    """
+    Сравнение распределения t с нормальным на стандартизованных остатках.
+    Берём самый тяжелохвостый фактор. Слева QQ против нормального, точки на хвостах
+    уходят от прямой. Справа QQ против t с подогнанным числом степеней свободы,
+    точки ложатся на прямую. Значит t описывает хвосты, а нормальное нет.
+    """
+    import matplotlib.pyplot as plt
+    from scipy import stats
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    name = params_df["nu"].idxmin()           # минимальное nu это самые тяжёлые хвосты
+    nu = float(params_df.loc[name, "nu"])
+    r = std_resid[name].dropna()
+    z = (r - r.mean()) / r.std()
+    samp = np.sort(z.values)
+
+    n = len(samp)
+    p = (np.arange(1, n + 1) - 0.5) / n
+    q_norm = stats.norm.ppf(p)
+    # Квантили t приводим к единичной дисперсии, чтобы прямая была y=x.
+    q_t = stats.t.ppf(p, nu) * np.sqrt((nu - 2) / nu)
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+    for ax, theo, title in (
+        (axes[0], q_norm, "против нормального"),
+        (axes[1], q_t, f"против t (nu = {nu:.1f})"),
+    ):
+        lim = max(abs(theo[0]), abs(theo[-1]), abs(samp[0]), abs(samp[-1]))
+        ax.plot([-lim, lim], [-lim, lim], color=COLORS["grey"], linestyle="--",
+                linewidth=1.5)
+        ax.scatter(theo, samp, s=12, color=COLORS["main"])
+        ax.set_title(title)
+        ax.set_xlabel("Теоретические квантили")
+    axes[0].set_ylabel("Квантили остатков")
+    fig.suptitle(f"Хвосты остатков фактора {name}: t против нормального", y=1.02)
+    return save_slide(fig, "models_t_vs_normal", out_dir)
+
+
 def run(data_dir: str | Path | None = None) -> None:
     """
     Оценивает модели по риск-факторам из data_dir и сохраняет параметры туда же.
@@ -90,6 +162,13 @@ def run(data_dir: str | Path | None = None) -> None:
     theta1, theta2, q_bar = G.fit_dcc(std_resid)
     print(f"\nDCC: theta1={theta1:.4f}, theta2={theta2:.4f}, "
           f"сумма={theta1 + theta2:.4f}. Меньше 1, значит корреляции устойчивы")
+
+    # Графики для слайдов: волатильность GARCH и сравнение t с нормальным.
+    fig_dir = C.PROJECT_DIR / "docs" / "figures"
+    p1 = _plot_garch_vol(cond_vol, fig_dir)
+    p2 = _plot_t_vs_normal(std_resid, params_df, fig_dir)
+    print(f"\nГрафик волатильности GARCH: {p1}")
+    print(f"График сравнения t с нормальным: {p2}")
 
     # Сохраняем параметры для пунктов 4 и 5.
     gp_path = data_dir / "garch_params.parquet"

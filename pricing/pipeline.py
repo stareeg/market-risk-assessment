@@ -42,6 +42,65 @@ def _show(title: str, df, ndigits: int = 4) -> None:
     print(out.to_string())
 
 
+def _plot_bond_accuracy(bond_res: pd.DataFrame, out_dir: Path) -> Path:
+    """
+    Точность оценки облигаций: модельная чистая цена против рыночной по выпускам.
+    Подписываем ошибку в процентах над каждой парой столбиков. Видно, что модель
+    почти совпадает с рынком, заметнее всего расходится длинный конец.
+    """
+    import matplotlib.pyplot as plt
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    res = bond_res.sort_values("maturity")
+    labels = [f"{num}\n{mat.year}" for num, mat in zip(res.index, res["maturity"])]
+    x = np.arange(len(res))
+    w = 0.38
+
+    fig, ax = plt.subplots()
+    ax.bar(x - w / 2, res["model_clean_pct"], w, color=COLORS["main"],
+           label="модель")
+    ax.bar(x + w / 2, res["mkt_clean_pct"], w, color=COLORS["second"],
+           label="рынок")
+    top = max(res["model_clean_pct"].max(), res["mkt_clean_pct"].max())
+    for xi, err in zip(x, res["err_pct"]):
+        ax.text(xi, top + 2, f"{err:+.2f}%", ha="center", color=COLORS["accent"])
+    ax.set_ylim(0, top + 8)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_title("Облигации: модельная цена против рыночной")
+    ax.set_ylabel("Чистая цена, % номинала")
+    ax.legend(loc="lower right")
+    return save_slide(fig, "pricing_bonds", out_dir)
+
+
+def _plot_stock_r2(coeff: pd.DataFrame, out_dir: Path) -> Path:
+    """
+    Качество факторной модели по акциям: R2 на трёх EQ-факторах.
+    Чем ниже столбик, тем больше у бумаги своей идиосинкразии, которую факторы не
+    ловят. Эту часть риска вернём собственным шоком в п.5.
+    """
+    import matplotlib.pyplot as plt
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    r2 = coeff["R2"].sort_values(ascending=False)
+    x = np.arange(len(r2))
+
+    fig, ax = plt.subplots()
+    ax.bar(x, r2.values, color=COLORS["main"], alpha=0.85)
+    mean = r2.mean()
+    ax.axhline(mean, color=COLORS["accent"], linestyle="--", linewidth=2,
+               label=f"средний R2 = {mean:.2f}")
+    ax.set_xticks(x)
+    ax.set_xticklabels(list(r2.index), rotation=45, ha="right")
+    ax.set_ylim(0, 1)
+    ax.set_title("Факторная модель акций: доля объяснённой дисперсии R2")
+    ax.set_ylabel("R2")
+    ax.legend(loc="upper right")
+    return save_slide(fig, "pricing_stocks_r2", out_dir)
+
+
 def run(data_dir: str | Path | None = None) -> None:
     """
     Оценивает портфель на дату оценки по данным из data_dir и сохраняет туда же
@@ -96,6 +155,13 @@ def run(data_dir: str | Path | None = None) -> None:
     fx_tab = pd.DataFrame({"rate": fx_rates, "units": fx_pos,
                            "rub": pd.Series(C.FX_NOTIONAL_RUB)})
     _show("Валюта, курс и позиция:", fx_tab, 4)
+
+    # Графики для слайдов: точность облигаций и R2 факторной модели акций.
+    fig_dir = C.PROJECT_DIR / "docs" / "figures"
+    p1 = _plot_bond_accuracy(bond_res, fig_dir)
+    p2 = _plot_stock_r2(coeff, fig_dir)
+    print(f"\nГрафик точности облигаций: {p1}")
+    print(f"График R2 факторной модели: {p2}")
 
     # Последние цены для старта симуляции в п.5.
     bond_snap = B.save_last_prices(data_dir, eval_date)
