@@ -34,7 +34,6 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 
-import config as C
 from pricing import bonds as B
 from pricing import curve as CV
 
@@ -61,7 +60,7 @@ def estimate_short_rate_vol(data_dir: Path, start: str = "2023-01-01") -> float:
     return float(dl.std() * np.sqrt(252))
 
 
-def build_grid(num: str, eval_date: pd.Timestamp):
+def build_grid(num: str, eval_date: pd.Timestamp, data_dir: Path):
     """
     Строит временную сетку решётки и денежные потоки на её узлах.
 
@@ -69,10 +68,10 @@ def build_grid(num: str, eval_date: pd.Timestamp):
     погашение). Потоки ложатся ровно на свои узлы, поэтому решётка точна по
     срокам. Возвращает сетку в годах, потоки по узлам и номер узла оферты.
     """
-    coupons = pd.read_parquet(C.DATA_DIR / "bonds_coupons.parquet")
+    coupons = pd.read_parquet(data_dir / "bonds_coupons.parquet")
     coupons["coupondate"] = pd.to_datetime(coupons["coupondate"])
     coupons["startdate"] = pd.to_datetime(coupons["startdate"])
-    desc = pd.read_parquet(C.DATA_DIR / "bonds_descriptions.parquet")
+    desc = pd.read_parquet(data_dir / "bonds_descriptions.parquet")
     desc["NUMBER"] = desc["NUMBER"].astype(str)
     maturity = pd.Timestamp(desc.set_index("NUMBER").loc[num, "MATDATE"])
 
@@ -150,7 +149,7 @@ def evaluate(data_dir: Path, eval_date: pd.Timestamp) -> tuple[pd.DataFrame, dic
     sigma = estimate_short_rate_vol(data_dir)
     node_yields = CV.load_base_curve(data_dir, eval_date).values
 
-    grid_t, cf_nodes, opt_step, coupons = build_grid(BOND_NUMBER, eval_date)
+    grid_t, cf_nodes, opt_step, coupons = build_grid(BOND_NUMBER, eval_date, data_dir)
     zero_prices = np.array([1.0] + [float(CV.discount_factors(node_yields, t))
                                     for t in grid_t[1:]])
     disc_steps = calibrate_bdt(grid_t, zero_prices, sigma)
