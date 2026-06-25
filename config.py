@@ -8,9 +8,8 @@
 from __future__ import annotations
 from pathlib import Path
 
-# --- Каталоги -------------------------------------------------------------
-# Папка data лежит рядом с папкой utils (то есть в project_2/).
-PROJECT_DIR = Path(__file__).resolve().parents[1]
+# Каталоги. config.py лежит в корне проекта, рядом с ним папка data.
+PROJECT_DIR = Path(__file__).resolve().parents[0]
 DATA_DIR = PROJECT_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 

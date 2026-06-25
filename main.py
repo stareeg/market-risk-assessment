@@ -11,19 +11,19 @@
     python main.py --stage factors    # только риск-факторы (п.2)
     python main.py --list             # показать список этапов и статус
 
-Пока часть этапов не перенесена из тетрадок в src/, см. refactor-plan.md.
+Часть этапов ещё не перенесена из тетрадок в модули, см. refactor-plan.md.
 """
 from __future__ import annotations
 
 import argparse
 
-from src import config as C
+import config as C
 
 
 # Этапы пайплайна по порядку. Для каждого: ключ, пункт задания, описание,
-# готов ли (реализован в src/) и ответственный.
+# готов ли (реализован в модулях) и ответственный.
 STAGES = [
-    ("data",     "п.1", "Сбор данных из MOEX и ЦБ РФ",        False, "Сева"),
+    ("data",     "п.1", "Сбор данных из MOEX и ЦБ РФ",        True,  "Сева"),
     ("factors",  "п.2", "Риск-факторы и PCA",                 False, "Сева"),
     ("models",   "п.3", "Стохастические модели (GARCH-DCC)",  False, "Лёша"),
     ("pricing",  "п.4", "Оценка стоимости инструментов",      False, "Лёша"),
@@ -33,9 +33,22 @@ STAGES = [
 ]
 
 
+def _run_data() -> None:
+    # Импортируем внутри функции, чтобы тяжёлые зависимости грузились
+    # только когда этап реально запускают.
+    from data_collection import pipeline
+    pipeline.run()
+
+
+# Готовые этапы. Ключ это функция запуска. Остальные пока не реализованы.
+STAGE_RUNNERS = {
+    "data": _run_data,
+}
+
+
 def _not_ready(key: str) -> None:
-    """Сообщает, что этап ещё не перенесён в src/."""
-    print(f"  Этап '{key}' пока не реализован в src/.")
+    """Сообщает, что этап ещё не перенесён в модули."""
+    print(f"  Этап '{key}' пока не реализован.")
     print("  Что и в каком порядке делаем, смотри в refactor-plan.md.")
 
 
@@ -47,23 +60,11 @@ def run_stage(key: str) -> None:
 
     print(f"\n=== {info[1]}  {info[2]}  ({info[4]}) ===")
 
-    # По мере переноса кода из тетрадок здесь будут вызовы вида:
-    #   from src.data_collection import pipeline; pipeline.run()
-    # Пока все этапы помечены как незавершённые.
-    if key == "data":
+    runner = STAGE_RUNNERS.get(key)
+    if runner is None:
         _not_ready(key)
-    elif key == "factors":
-        _not_ready(key)
-    elif key == "models":
-        _not_ready(key)
-    elif key == "pricing":
-        _not_ready(key)
-    elif key == "var":
-        _not_ready(key)
-    elif key == "backtest":
-        _not_ready(key)
-    elif key == "tests":
-        _not_ready(key)
+    else:
+        runner()
 
 
 def run_all() -> None:

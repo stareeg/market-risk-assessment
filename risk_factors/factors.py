@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .. import config as C
+import config as C
 pd.options.io.parquet.engine = 'fastparquet'
 
 # Известные сроки кривой (в годах) — для упорядочивания и интерпретации PCA.
