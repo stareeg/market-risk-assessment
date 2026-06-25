@@ -1,0 +1,13 @@
+# Учебные материалы и приватные файлы (не публикуем)
+lectures/
+project_tasks/
+CLAUDE.md
+.claude/
+
+# Временные .py скрипты
+temp/
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
