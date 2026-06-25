@@ -11,3 +11,7 @@ temp/
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
+
+# Виртуальное окружение
+.venv/
+venv/

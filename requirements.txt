@@ -1,0 +1,24 @@
+# Зависимости проекта по рыночному риску.
+# Ставим так:  python -m pip install -r requirements.txt
+#
+# Проверено на Python 3.11 и 3.12. На очень свежем 3.14 под часть пакетов
+# (arch, fastparquet) может не быть готовых колёс, тогда берём Python 3.12.
+
+# Данные и расчёты
+pandas>=2.2
+numpy>=1.26
+scipy>=1.12
+statsmodels>=0.14
+scikit-learn>=1.4
+arch>=7.0            # GARCH и DCC
+
+# Загрузка данных
+requests>=2.31
+
+# Хранение промежуточных результатов
+pyarrow>=15.0
+fastparquet>=2024.5
+
+# Графики для презентации
+matplotlib>=3.8
+seaborn>=0.13
