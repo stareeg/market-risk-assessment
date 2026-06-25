@@ -23,6 +23,14 @@ from . import diagnostics as D
 pd.options.io.parquet.engine = "fastparquet"
 
 
+# Короткие подписи факторов для осей и ячеек тепловых карт, чтобы не наезжали.
+FACTOR_LABELS = {
+    "RATE_PC1": "Ставки 1", "RATE_PC2": "Ставки 2", "RATE_PC3": "Ставки 3",
+    "EQ_PC1": "Акции 1", "EQ_PC2": "Акции 2", "EQ_PC3": "Акции 3",
+    "FX_USD": "USD", "FX_EUR": "EUR",
+}
+
+
 def _show(title: str, df: pd.DataFrame, ndigits: int = 4) -> None:
     """Печатает таблицу с заголовком, числовые колонки округляет для читаемости."""
     print(f"\n{title}")
@@ -101,6 +109,248 @@ def _plot_tails(risk_factors: pd.DataFrame, out_dir: Path) -> Path:
     ax.set_ylabel("Квантили фактора")
     ax.legend(loc="upper left")
     return save_slide(fig, "factors_tails", out_dir)
+
+
+def _plot_stocks_dynamics(stock_px_adj: pd.DataFrame, out_dir: Path) -> Path:
+    """
+    Динамика 10 акций портфеля, каждая нормирована к 100 на первый день.
+    Рисуем сеткой мелких панелей: так десять рядов читаются со слайда, а
+    нормировка делает их сравнимыми по форме. Цены уже очищены от сплитов,
+    иначе у Полюса день дробления дал бы ложный обвал в 10 раз.
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    tickers = C.PORTFOLIO_STOCKS
+    px = stock_px_adj[tickers]
+    base = px.apply(lambda s: s[s.first_valid_index()])   # цена в первый торговый день
+    norm = px.divide(base) * 100.0
+
+    fig, axes = plt.subplots(2, 5, figsize=(14, 6), sharex=True)
+    for ax, tk in zip(axes.flat, tickers):
+        ax.plot(norm.index, norm[tk], color=COLORS["main"], linewidth=1.3)
+        ax.axhline(100, color=COLORS["grey"], linestyle="--", linewidth=0.8, alpha=0.7)
+        ax.set_title(tk, fontsize=13)
+        ax.tick_params(labelsize=10)
+        ax.xaxis.set_major_locator(mdates.YearLocator(2))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    fig.suptitle("Динамика 10 акций портфеля, нормировано к 100 на старте",
+                 y=1.02, fontsize=15)
+    return save_slide(fig, "data_stocks_dynamics", out_dir)
+
+
+def _plot_yield_curve(yields: pd.DataFrame, out_dir: Path) -> Path:
+    """
+    Кривая бескупонной доходности на нескольких датах.
+    Доходность как функция срока в разные моменты: начало периода, шок 2022,
+    спокойный год и дата оценки. Видно, как меняются и уровень, и форма кривой.
+    Это подводка к PCA кривой: уровень, наклон, кривизна.
+    """
+    import matplotlib.pyplot as plt
+    from viz.style import set_slide_style, COLORS, save_slide
+    from .factors import TENOR_YEARS
+
+    set_slide_style()
+    idx = yields.index
+    targets = ["2021-02-01", "2022-03-31", "2023-09-01", C.EVAL_DATE]
+    colors = [COLORS["second"], COLORS["accent"], COLORS["grey"], COLORS["main"]]
+
+    fig, ax = plt.subplots()
+    for t, col in zip(targets, colors):
+        # берём ближайшую доступную дату, ЦБ публикует по своему календарю
+        pos = idx.get_indexer([pd.Timestamp(t)], method="nearest")[0]
+        d = idx[pos]
+        ax.plot(TENOR_YEARS, yields.loc[d].values, marker="o", color=col,
+                linewidth=2, label=d.strftime("%d.%m.%Y"))
+    ax.set_title("Кривая бескупонной доходности в разные моменты")
+    ax.set_xlabel("Срок, лет")
+    ax.set_ylabel("Доходность, % годовых")
+    ax.legend(title="дата", loc="best")
+    return save_slide(fig, "data_yield_curve", out_dir)
+
+
+def _plot_kurtosis(risk_factors: pd.DataFrame, out_dir: Path) -> Path:
+    """
+    Тяжесть хвостов сразу по всем факторам.
+    Слева избыточный эксцесс: у нормального он равен нулю, у нас везде заметно
+    больше. Справа индекс Хилла: у финансовых рядов он 2-4, чем меньше, тем
+    тяжелее хвост. Вместе это обоснование выбора t-распределения в п.3.
+    """
+    import matplotlib.pyplot as plt
+    from viz.style import set_slide_style, COLORS, save_slide
+    from . import diagnostics as D
+
+    set_slide_style()
+    cols = list(risk_factors.columns)
+    labels = [FACTOR_LABELS[c] for c in cols]
+    tt = D.tail_table(risk_factors).loc[cols]
+    exc = tt["exc_kurt"].values
+    hill = tt["hill_alpha"].values
+    x = np.arange(len(cols))
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
+    axes[0].bar(x, exc, color=COLORS["main"])
+    axes[0].axhline(0, color=COLORS["accent"], linewidth=1.5, linestyle="--")
+    axes[0].text(len(cols) - 1, 0.2, "нормальное распределение",
+                 color=COLORS["accent"], va="bottom", ha="right", fontsize=11)
+    axes[0].set_title("Избыточный эксцесс (больше - хвост тяжелее)")
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels(labels, rotation=45, ha="right")
+
+    axes[1].bar(x, hill, color=COLORS["second"])
+    axes[1].axhspan(2, 4, color=COLORS["grey"], alpha=0.2)
+    axes[1].set_title("Индекс Хилла (2-4 это тяжёлые хвосты)")
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels(labels, rotation=45, ha="right")
+
+    fig.suptitle("У всех факторов хвосты тяжелее нормального распределения",
+                 y=1.03, fontsize=15)
+    return save_slide(fig, "factors_kurtosis", out_dir)
+
+
+def _plot_acf(risk_factors: pd.DataFrame, out_dir: Path, factor: str = "EQ_PC1",
+              nlags: int = 20) -> Path:
+    """
+    Автокорреляция фактора в доходностях и в их квадратах.
+    Слева сами доходности: автокорреляция почти нулевая, линейной памяти нет.
+    Справа квадраты доходностей: автокорреляция держится много дней. Это и есть
+    кластеризация волатильности, прямой аргумент в пользу GARCH.
+    """
+    import matplotlib.pyplot as plt
+    from statsmodels.tsa.stattools import acf
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    x = risk_factors[factor].dropna().values
+    n = len(x)
+    a_ret = acf(x, nlags=nlags, fft=True)[1:]
+    a_sq = acf(x ** 2, nlags=nlags, fft=True)[1:]
+    conf = 1.96 / np.sqrt(n)   # граница значимости автокорреляции
+    lags = np.arange(1, nlags + 1)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+    for ax, vals, title in (
+        (axes[0], a_ret, "Доходности фактора"),
+        (axes[1], a_sq, "Квадраты доходностей"),
+    ):
+        ax.bar(lags, vals, color=COLORS["main"], width=0.7)
+        ax.axhline(0, color="black", linewidth=0.8)
+        ax.axhline(conf, color=COLORS["accent"], linestyle="--", linewidth=1.2)
+        ax.axhline(-conf, color=COLORS["accent"], linestyle="--", linewidth=1.2)
+        ax.set_title(title)
+        ax.set_xlabel("Лаг, дней")
+    axes[0].set_ylabel("Автокорреляция")
+    fig.suptitle(f"Фактор {factor}: в доходностях памяти нет, в квадратах есть "
+                 "(кластеризация волатильности)", y=1.02, fontsize=14)
+    return save_slide(fig, "factors_acf", out_dir)
+
+
+def _plot_rolling_corr(risk_factors: pd.DataFrame, out_dir: Path,
+                       a: str = "EQ_PC1", b: str = "FX_USD", window: int = 60) -> Path:
+    """
+    Скользящая корреляция пары факторов во времени.
+    Если бы связь была постоянной, линия держалась бы у одного уровня. Она же
+    заметно гуляет, поэтому статической корреляции мало и нужна надстройка DCC
+    поверх GARCH.
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from viz.style import set_slide_style, COLORS, save_slide
+
+    set_slide_style()
+    pair = risk_factors[[a, b]].dropna()
+    rc = pair[a].rolling(window).corr(pair[b]).dropna()
+    full = pair[a].corr(pair[b])
+
+    fig, ax = plt.subplots()
+    ax.plot(rc.index, rc.values, color=COLORS["main"], linewidth=1.6)
+    ax.axhline(full, color=COLORS["grey"], linestyle="--", linewidth=1.5,
+               label=f"корреляция за весь период {full:.2f}")
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_ylim(-1, 1)
+    ax.set_title(f"Скользящая корреляция {a} и {b}, окно {window} дней")
+    ax.set_xlabel("Год")
+    ax.set_ylabel("Корреляция")
+    ax.legend(loc="upper left")
+    ax.xaxis.set_major_locator(mdates.YearLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    return save_slide(fig, "factors_rolling_corr", out_dir)
+
+
+def _plot_corr_regimes(risk_factors: pd.DataFrame, out_dir: Path) -> Path:
+    """
+    Корреляции факторов в кризис и в спокойный период двумя картами рядом.
+    Структура связей между режимами разная (в кризис связи обычно сильнее),
+    значит постоянная корреляционная матрица неадекватна. Это наглядное
+    оправдание DCC.
+    """
+    import matplotlib.pyplot as plt
+    from viz.style import set_slide_style, save_slide
+
+    set_slide_style()
+    labels = [FACTOR_LABELS[c] for c in risk_factors.columns]
+    crisis = risk_factors.loc["2022-02-01":"2022-12-31"]
+    calm = risk_factors.loc["2024-01-01":"2025-12-31"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 6))
+    fig.set_layout_engine("constrained")   # ровно разложит две карты и общую шкалу
+    im = None
+    for ax, sub, title in (
+        (axes[0], crisis, "Кризис 2022"),
+        (axes[1], calm, "Спокойный период 2024-2025"),
+    ):
+        m = sub.corr().values
+        im = ax.imshow(m, vmin=-1, vmax=1, cmap="RdBu_r")
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=11)
+        ax.set_yticks(range(len(labels)))
+        ax.set_yticklabels(labels, fontsize=11)
+        for i in range(len(labels)):
+            for j in range(len(labels)):
+                ax.text(j, i, f"{m[i, j]:.2f}", ha="center", va="center",
+                        fontsize=8, color="white" if abs(m[i, j]) > 0.6 else "black")
+        ax.set_title(title)
+    fig.colorbar(im, ax=axes, fraction=0.025, pad=0.02, label="корреляция")
+    fig.suptitle("Корреляции факторов меняются между режимами, поэтому нужна DCC",
+                 fontsize=14)
+    return save_slide(fig, "factors_corr_regimes", out_dir)
+
+
+def _plot_curve_loadings(loadings: pd.DataFrame, interp: pd.DataFrame,
+                         out_dir: Path) -> Path:
+    """
+    Нагрузки первых трёх компонент кривой по срокам.
+    Первая компонента сдвигает всю кривую (уровень), вторая разворачивает
+    короткий и длинный конец в разные стороны (наклон), третья выгибает
+    середину (кривизна). Поэтому трёх компонент хватает.
+    """
+    import matplotlib.pyplot as plt
+    from viz.style import set_slide_style, COLORS, save_slide
+    from .factors import TENOR_YEARS
+
+    set_slide_style()
+    L = loadings.copy()
+    for pc in L.columns:
+        # ориентируем знак так, чтобы наибольшая по модулю нагрузка была вверх,
+        # иначе PCA может выдать перевёрнутую, но эквивалентную компоненту
+        imax = L[pc].abs().idxmax()
+        if L.loc[imax, pc] < 0:
+            L[pc] = -L[pc]
+
+    colors = [COLORS["main"], COLORS["accent"], COLORS["second"]]
+    fig, ax = plt.subplots()
+    for pc, col in zip(["PC1", "PC2", "PC3"], colors):
+        name = interp.loc[pc, "interpretation"]
+        ax.plot(TENOR_YEARS, L[pc].values, marker="o", color=col, linewidth=2,
+                label=f"{pc}: {name}")
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_title("Нагрузки PCA кривой: уровень, наклон, кривизна")
+    ax.set_xlabel("Срок, лет")
+    ax.set_ylabel("Нагрузка")
+    ax.legend(loc="best")
+    return save_slide(fig, "factors_curve_loadings", out_dir)
 
 
 def run(data_dir: str | Path | None = None) -> None:
@@ -217,12 +467,24 @@ def run(data_dir: str | Path | None = None) -> None:
     _show("Сезонность факторов по дням недели:",
           D.weekday_seasonality(risk_factors), ndigits=5)
 
-    # Графики для слайдов: scree PCA и тяжёлые хвосты.
+    # Графики для слайдов. Обзор входных данных рисуем здесь же, а не на этапе
+    # загрузки: цены уже очищены от сплитов, а перерисовка из parquet быстрая.
     fig_dir = C.PROJECT_DIR / "docs" / "figures"
-    p1 = _plot_scree(scree_y, scree_e, fig_dir)
-    p2 = _plot_tails(risk_factors, fig_dir)
-    print(f"\nГрафик scree PCA: {p1}")
-    print(f"График тяжёлых хвостов: {p2}")
+    figs = [
+        ("scree PCA", _plot_scree(scree_y, scree_e, fig_dir)),
+        ("тяжёлые хвосты", _plot_tails(risk_factors, fig_dir)),
+        ("динамика акций", _plot_stocks_dynamics(stock_px_adj, fig_dir)),
+        ("кривая доходности", _plot_yield_curve(panels["yields"], fig_dir)),
+        ("эксцесс и Хилл", _plot_kurtosis(risk_factors, fig_dir)),
+        ("ACF доходностей", _plot_acf(risk_factors, fig_dir)),
+        ("скользящая корреляция", _plot_rolling_corr(risk_factors, fig_dir)),
+        ("корреляции по режимам", _plot_corr_regimes(risk_factors, fig_dir)),
+        ("нагрузки PCA кривой",
+         _plot_curve_loadings(load_y, P.interpret_curve_pcs(load_y), fig_dir)),
+    ]
+    print()
+    for label, path in figs:
+        print(f"График {label}: {path}")
 
     # Сохраняем итог и нагрузки PCA, понадобятся в пунктах 3-5
     rf_path = data_dir / "risk_factors.parquet"
