@@ -5,7 +5,5 @@
   factors.py     - очистка данных, сплиты, лог-доходности, выравнивание дат.
   pca_tools.py   - PCA по кривой ставок и по акциям, факторный анализ.
   diagnostics.py - стационарность, тяжесть хвостов, сезонность.
-
-Оркестрация (порядок шагов и сохранение risk_factors.parquet) переедет сюда
-из legacy/risk_factor_selection.ipynb в pipeline.py. См. refactor-plan.md.
+  pipeline.py    - оркестрация этапа и сохранение risk_factors.parquet.
 """

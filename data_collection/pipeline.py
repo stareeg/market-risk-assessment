@@ -26,7 +26,7 @@ def _make_saver(data_dir: Path):
     def save_parquet(df: pd.DataFrame, name: str) -> Path:
         path = data_dir / f"{name}.parquet"
         df.to_parquet(path, index=False)
-        print(f"  [ok] {name}.parquet  строк: {len(df):>6}, колонок: {df.shape[1]}")
+        print(f"  сохранено {name}.parquet: строк {len(df)}, колонок {df.shape[1]}")
         return path
     return save_parquet
 
@@ -43,16 +43,18 @@ def run(data_dir: str | Path | None = None) -> None:
 
     np.random.seed(C.RANDOM_SEED)   # фиксируем seed (воспроизводимость)
     session = S._session()          # один HTTP-сеанс на всю загрузку
-    print("Период:", C.START_DATE, C.END_DATE)
-    print("Каталог данных:", data_dir)
+    print(f"Период загрузки: с {C.START_DATE} по {C.END_DATE}")
+    print(f"Каталог данных: {data_dir}")
 
-    # 1.a Кривая бескупонной доходности ЦБ РФ (спот-доходности по срокам)
+    # Кривая бескупонной доходности ЦБ РФ (спот-доходности по срокам)
+    print("\nКривая бескупонной доходности ЦБ РФ")
     zcyc = S.get_cbr_zcyc(session, C.START_DATE, C.END_DATE)
-    print("Период КБД:", zcyc["DATE"].min().date(), zcyc["DATE"].max().date())
+    print(f"  период кривой: с {zcyc['DATE'].min().date()} по {zcyc['DATE'].max().date()}")
     save_parquet(zcyc, "zcyc_cbr")
 
-    # 1.b Описания ОФЗ и расписания купонов. Берём 10 выпусков с запасом.
-    # По каждому резолвим полный SECID, тянем карточку и расписание выплат.
+    # Описания ОФЗ и расписания купонов. Берём 10 выпусков с запасом.
+    # По каждому находим полный SECID, тянем карточку и расписание выплат.
+    print(f"\nОблигации ОФЗ: описания и купоны ({len(C.OFZ_PD_NUMBERS)} выпусков)")
     desc_rows, coupon_frames, secids = [], [], {}
     for num in C.OFZ_PD_NUMBERS:
         secid = S.resolve_ofz_secid(session, num)
@@ -77,6 +79,7 @@ def run(data_dir: str | Path | None = None) -> None:
     bonds_desc["no_offer"] = bonds_desc["OFFERDATE"].isna()
     assert bonds_desc["after_2026"].all(), "Есть выпуск с погашением до 2026"
     assert bonds_desc["no_offer"].all(), "Есть выпуск с офертой"
+    print("  все выпуски без оферты и с погашением после 2026, критерии задания сходятся")
     save_parquet(bonds_desc, "bonds_descriptions")
 
     # Расписания купонов всех выбранных ОФЗ
@@ -84,7 +87,8 @@ def run(data_dir: str | Path | None = None) -> None:
     bonds_coupons["coupondate"] = pd.to_datetime(bonds_coupons["coupondate"])
     save_parquet(bonds_coupons, "bonds_coupons")
 
-    # 1.c Котировки выбранных ОФЗ (доска TQOB)
+    # Котировки выбранных ОФЗ (доска TQOB)
+    print("\nКотировки ОФЗ (доска TQOB)")
     bh_frames = []
     for num, secid in secids.items():
         h = S.get_bond_history(session, secid, C.START_DATE, C.END_DATE)
@@ -97,7 +101,8 @@ def run(data_dir: str | Path | None = None) -> None:
         bonds_history[c] = pd.to_numeric(bonds_history[c], errors="coerce")
     save_parquet(bonds_history, "bonds_history")
 
-    # 1.d Котировки акций (доска TQBR). Берём 12 тикеров с запасом.
+    # Котировки акций (доска TQBR). Берём 12 тикеров с запасом.
+    print(f"\nКотировки акций (доска TQBR, {len(C.STOCK_TICKERS)} тикеров)")
     sh_frames = []
     for t in C.STOCK_TICKERS:
         h = S.get_share_history(session, t, C.START_DATE, C.END_DATE)
@@ -109,7 +114,8 @@ def run(data_dir: str | Path | None = None) -> None:
         stocks_history[c] = pd.to_numeric(stocks_history[c], errors="coerce")
     save_parquet(stocks_history, "stocks_history")
 
-    # 1.e Индексы МосБиржи (IMOEX) и РТС (RTSI)
+    # Индексы МосБиржи (IMOEX) и РТС (RTSI)
+    print("\nИндексы МосБиржи (IMOEX) и РТС (RTSI)")
     idx_frames = []
     for t in C.INDEX_TICKERS:
         h = S.get_index_history(session, t, C.START_DATE, C.END_DATE)
@@ -120,14 +126,16 @@ def run(data_dir: str | Path | None = None) -> None:
         indices_history[c] = pd.to_numeric(indices_history[c], errors="coerce")
     save_parquet(indices_history, "indices_history")
 
-    # 1.e Нефть Brent. Спота нет, строим непрерывный фронт-месяц из фьючерсов BR.
+    # Нефть Brent. Спота нет, строим непрерывный фронт-месяц из фьючерсов BR.
     # Это самый долгий шаг, перебираем все месячные контракты.
+    print("\nНефть Brent, склеиваем фронт-месяц из фьючерсов BR (шаг долгий)")
     brent = S.get_brent_front_month(session, C.START_DATE, C.END_DATE, C.BRENT_ASSETCODE)
     brent["TRADEDATE"] = pd.to_datetime(brent["TRADEDATE"])
-    print("Brent дней:", len(brent))
+    print(f"  собрано {len(brent)} торговых дней")
     save_parquet(brent, "brent_history")
 
-    # 1.e Официальные курсы USD и EUR (ЦБ РФ, непрерывный ряд)
+    # Официальные курсы USD и EUR (ЦБ РФ, непрерывный ряд)
+    print("\nОфициальные курсы USD и EUR (ЦБ РФ)")
     fx_frames = []
     for code, val in C.CBR_CURRENCIES.items():
         f = S.get_cbr_fx(session, val, C.START_DATE, C.END_DATE)
@@ -136,14 +144,15 @@ def run(data_dir: str | Path | None = None) -> None:
     fx = pd.concat(fx_frames, ignore_index=True)
     save_parquet(fx, "fx_cbr")
 
-    # 1.f Фьючерс и опционы на Si за выбранный день. Берём ближайший фьючерс
+    # Фьючерс и опционы на Si за выбранный день. Берём ближайший фьючерс
     # с экспирацией больше месяца и опционы той же серии.
+    print(f"\nСрочный рынок Si за {C.FORTS_TRADE_DAY}")
     fut_day = S.get_forts_futures_on_date(session, C.FORTS_ASSETCODE, C.FORTS_TRADE_DAY)
     fut_specs = S.get_futures_specs(session, fut_day["SECID"].tolist())
     front = S.pick_front_future(fut_specs, C.FORTS_TRADE_DAY, C.FORTS_MIN_DAYS_TO_EXPIRY)
     fut_day = fut_day.merge(fut_specs[["SECID", "LSTDELDATE"]], on="SECID", how="left")
     fut_day["IS_CHOSEN_FRONT"] = fut_day["SECID"] == front
-    print("Выбранный фьючерс:", front)
+    print(f"  выбранный фьючерс: {front}")
     save_parquet(fut_day, f"forts_futures_{C.FORTS_TRADE_DAY}")
 
     # Опционная цепочка на выбранный фьючерс (Call и Put, все страйки)
@@ -159,14 +168,14 @@ def run(data_dir: str | Path | None = None) -> None:
         on="SECID", how="inner")
     chain["STRIKE"] = pd.to_numeric(chain["STRIKE"], errors="coerce")
     chain = chain.sort_values(["OPTIONTYPE", "STRIKE"]).reset_index(drop=True)
-    print("Опционов в цепочке:", len(chain))
+    print(f"  опционов в цепочке: {len(chain)}")
     save_parquet(chain, f"forts_options_chain_{C.FORTS_TRADE_DAY}")
 
     # Короткий итог по сохранённым файлам
-    print("\nСохранённые файлы:")
+    print("\nИтог, сохранённые файлы:")
     for f in sorted(data_dir.glob("*.parquet")):
         df = pd.read_parquet(f)
-        print(f"  {f.name:42} строк: {len(df):>6}, колонок: {df.shape[1]}")
+        print(f"  {f.name:42} строк {len(df):>6}, колонок {df.shape[1]}")
 
 
 if __name__ == "__main__":

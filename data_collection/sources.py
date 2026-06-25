@@ -1,13 +1,13 @@
 """
 Функции загрузки данных из первоисточников, разрешённых в задании:
-  * MOEX ISS  (moex.ru)   — акции, облигации, индексы, срочный рынок;
-  * ЦБ РФ      (cbr.ru)    — кривая бескупонной доходности (КБД) и курсы валют.
+  * MOEX ISS (moex.ru): акции, облигации, индексы, срочный рынок;
+  * ЦБ РФ (cbr.ru): кривая бескупонной доходности (КБД) и курсы валют.
 
 Все сетевые обращения идут через явные HTTP-запросы к открытым сервисам, без
-авторизации. Это позволяет полностью воспроизвести выборку из тетрадки.
+авторизации. Так выборку можно полностью воспроизвести.
 
-Каждая функция возвращает pandas.DataFrame и не пишет на диск — сохранение
-в parquet делает тетрадка (так удобнее обращаться к промежуточным результатам).
+Каждая функция возвращает pandas.DataFrame и не пишет на диск, сохранение
+в parquet делает pipeline (так удобнее обращаться к промежуточным результатам).
 """
 from __future__ import annotations
 
@@ -28,9 +28,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (market-risk-hw data_loader)"}
 FUT_MONTH_CODES = "FGHJKMNQUVXZ"
 
 
-# =========================================================================
-#  Низкоуровневые помощники MOEX ISS
-# =========================================================================
+# Низкоуровневые помощники MOEX ISS
 def _session() -> requests.Session:
     s = requests.Session()
     s.headers.update(HEADERS)
@@ -47,7 +45,7 @@ def _iss_get(session: requests.Session, url: str, params: dict | None = None) ->
             r = session.get(url, params=params, timeout=60)
             r.raise_for_status()
             return r.json()
-        except Exception as e:  # noqa: BLE001 — простой retry
+        except Exception as e:  # noqa: BLE001, простой retry
             last = e
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"ISS GET failed: {url} :: {last}")
@@ -71,7 +69,7 @@ def _iss_history_paged(session, url: str, params: dict, block: str = "history") 
             break
         frames.append(df)
         start += len(df)
-        # cursor может отсутствовать при iss.meta=off — ориентируемся на размер пачки
+        # cursor может отсутствовать при iss.meta=off, ориентируемся на размер пачки
         if len(df) < 100:
             break
     if not frames:
@@ -79,9 +77,7 @@ def _iss_history_paged(session, url: str, params: dict, block: str = "history") 
     return pd.concat(frames, ignore_index=True)
 
 
-# =========================================================================
-#  1.b / 1.c  ОБЛИГАЦИИ
-# =========================================================================
+# Облигации
 def resolve_ofz_secid(session, number: str) -> str:
     """По короткому номеру выпуска (например '26221') находит полный SECID ОФЗ."""
     payload = _iss_get(session, f"{ISS}/securities.json",
@@ -114,7 +110,7 @@ def get_bond_schedule(session, secid: str) -> tuple[pd.DataFrame, pd.DataFrame, 
 
 def get_bond_history(session, secid: str, start: str, end: str,
                      board: str = "TQOB") -> pd.DataFrame:
-    """История торгов облигации (доска TQOB — основной режим ОФЗ)."""
+    """История торгов облигации (доска TQOB, основной режим ОФЗ)."""
     url = f"{ISS}/history/engines/stock/markets/bonds/boards/{board}/securities/{secid}.json"
     cols = ("TRADEDATE", "SHORTNAME", "SECID", "CLOSE", "LEGALCLOSEPRICE",
             "ACCINT", "WAPRICE", "YIELDCLOSE", "DURATION", "FACEVALUE",
@@ -126,9 +122,7 @@ def get_bond_history(session, secid: str, start: str, end: str,
     return df
 
 
-# =========================================================================
-#  1.d  АКЦИИ   |   1.e  ИНДЕКСЫ
-# =========================================================================
+# Акции и индексы
 def get_share_history(session, ticker: str, start: str, end: str,
                       board: str = "TQBR") -> pd.DataFrame:
     url = f"{ISS}/history/engines/stock/markets/shares/boards/{board}/securities/{ticker}.json"
@@ -149,9 +143,7 @@ def get_index_history(session, ticker: str, start: str, end: str) -> pd.DataFram
     })
 
 
-# =========================================================================
-#  1.e  BRENT (фронт-месяц из фьючерсов BR на FORTS)
-# =========================================================================
+# Brent, фронт-месяц из фьючерсов BR на FORTS
 def _forts_contract_codes(assetcode: str, start: str, end: str) -> list[str]:
     """Генерирует возможные коды фьючерсов вида BR<месяц><год> на интервале."""
     y0, y1 = int(start[:4]), int(end[:4])
@@ -188,16 +180,14 @@ def get_brent_front_month(session, start: str, end: str,
     allc["VOLUME"] = pd.to_numeric(allc["VOLUME"], errors="coerce").fillna(0)
     allc["CLOSE"] = pd.to_numeric(allc["CLOSE"], errors="coerce")
     allc = allc.dropna(subset=["CLOSE"])
-    # На каждую дату — строка контракта с наибольшим объёмом.
+    # На каждую дату берём строку контракта с наибольшим объёмом.
     idx = allc.groupby("TRADEDATE")["VOLUME"].idxmax()
     front = allc.loc[idx].sort_values("TRADEDATE").reset_index(drop=True)
     front = front.rename(columns={"SECID": "FRONT_CONTRACT", "CLOSE": "BRENT_USD"})
     return front[["TRADEDATE", "FRONT_CONTRACT", "BRENT_USD", "VOLUME", "OPENPOSITION"]]
 
 
-# =========================================================================
-#  1.f  Срочный рынок: фьючерс + цепочка опционов на один день
-# =========================================================================
+# Срочный рынок, фьючерс и цепочка опционов на один день
 def get_forts_futures_on_date(session, assetcode: str, date: str) -> pd.DataFrame:
     url = f"{ISS}/history/engines/futures/markets/forts/securities.json"
     df = _iss_history_paged(session, url, {
@@ -261,20 +251,18 @@ def pick_front_future(specs: pd.DataFrame, trade_day: str, min_days: int) -> str
     return ok.iloc[0]["SECID"]
 
 
-# =========================================================================
-#  1.a  КРИВАЯ БЕСКУПОННОЙ ДОХОДНОСТИ (ЦБ РФ)
-# =========================================================================
+# Кривая бескупонной доходности ЦБ РФ
 def _cbr_kbd_chunk(session, frm: str, to: str) -> pd.DataFrame:
     """Одна страница КБД ЦБ (даты в формате ДД.ММ.ГГГГ)."""
     url = "https://www.cbr.ru/hd_base/zcyc_params/"
     params = {"UniDbQuery.Posted": "True", "UniDbQuery.From": frm, "UniDbQuery.To": to}
     r = session.get(url, params=params, timeout=60)
-    # Страница отдаётся в UTF-8 (charset объявлен в заголовке) — не переопределяем.
+    # Страница отдаётся в UTF-8 (charset объявлен в заголовке), не переопределяем.
     tables = pd.read_html(io.StringIO(r.text), decimal=",", thousands="\xa0")
     if not tables:
         return pd.DataFrame()
     t = max(tables, key=lambda x: x.shape[0])
-    # Колонки приходят как MultiIndex ('Срок до погашения, лет', '0,25') — выпрямляем.
+    # Колонки приходят как MultiIndex ('Срок до погашения, лет', '0,25'), выпрямляем.
     new_cols = []
     for c in t.columns:
         label = c[1] if isinstance(c, tuple) else c
@@ -285,8 +273,8 @@ def _cbr_kbd_chunk(session, frm: str, to: str) -> pd.DataFrame:
 
 def get_cbr_zcyc(session, start: str, end: str) -> pd.DataFrame:
     """
-    Кривая бескупонной доходности гособлигаций (КБД) ЦБ РФ — пункт 1.a.
-    Доходности (% годовых) по срокам 0.25 … 30 лет. Качаем по годам и склеиваем.
+    Кривая бескупонной доходности гособлигаций (КБД) ЦБ РФ.
+    Доходности (% годовых) по срокам от 0.25 до 30 лет. Качаем по годам и склеиваем.
     """
     s, e = dt.date.fromisoformat(start), dt.date.fromisoformat(end)
     frames = []
@@ -301,16 +289,14 @@ def get_cbr_zcyc(session, start: str, end: str) -> pd.DataFrame:
     df = pd.concat(frames, ignore_index=True)
     df["DATE"] = pd.to_datetime(df["DATE"], format="%d.%m.%Y")
     df = df.drop_duplicates(subset="DATE").sort_values("DATE").reset_index(drop=True)
-    # Числовые колонки сроков -> float
+    # Числовые колонки сроков переводим во float
     for c in df.columns:
         if c != "DATE":
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
 
 
-# =========================================================================
-#  1.e  КУРСЫ ВАЛЮТ (ЦБ РФ, официальные)
-# =========================================================================
+# Курсы валют ЦБ РФ, официальные
 def get_cbr_fx(session, val_code: str, start: str, end: str) -> pd.DataFrame:
     """Официальный курс валюты ЦБ РФ за период (сервис XML_dynamic)."""
     d1 = dt.date.fromisoformat(start).strftime("%d/%m/%Y")

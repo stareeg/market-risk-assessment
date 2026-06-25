@@ -1,17 +1,15 @@
 """
 Единая точка входа в проект по рыночному риску.
 
-Запускает пайплайн по этапам. Каждый этап закрывает свой пункт задания и
-складывает промежуточные результаты в data/. Этапы идут строго по порядку,
-потому что каждый следующий читает то, что сохранил предыдущий.
+Запуск без аргументов прогоняет весь пайплайн по порядку: сбор данных,
+риск-факторы, модели, оценка инструментов, дальше VaR/ES, бэктестинг и тесты.
+Каждый этап читает то, что сохранил предыдущий, поэтому порядок важен.
 
 Примеры запуска:
-    python main.py --stage all        # весь пайплайн
-    python main.py --stage data       # только сбор данных (п.1)
-    python main.py --stage factors    # только риск-факторы (п.2)
-    python main.py --list             # показать список этапов и статус
-
-Часть этапов ещё не перенесена из тетрадок в модули, см. refactor-plan.md.
+    python main.py                    весь пайплайн
+    python main.py --stage data       только сбор данных
+    python main.py --stage factors    только риск-факторы
+    python main.py --list             список этапов и их статус
 """
 from __future__ import annotations
 
@@ -20,16 +18,15 @@ import argparse
 import config as C
 
 
-# Этапы пайплайна по порядку. Для каждого: ключ, пункт задания, описание,
-# готов ли (реализован в модулях) и ответственный.
+# Этапы пайплайна по порядку: ключ, номер, описание, готов ли, ответственный.
 STAGES = [
-    ("data",     "п.1", "Сбор данных из MOEX и ЦБ РФ",        True,  "Сева"),
-    ("factors",  "п.2", "Риск-факторы и PCA",                 False, "Сева"),
-    ("models",   "п.3", "Стохастические модели (GARCH-DCC)",  False, "Лёша"),
-    ("pricing",  "п.4", "Оценка стоимости инструментов",      False, "Лёша"),
-    ("var",      "п.5", "Monte Carlo, VaR и ES",              False, "Егор"),
-    ("backtest", "п.6", "Бэктестинг",                         False, "Вика"),
-    ("tests",    "п.7", "Статистические тесты VaR",           False, "Настя"),
+    ("data",     1, "Сбор данных из MOEX и ЦБ РФ",     True,  "Сева"),
+    ("factors",  2, "Риск-факторы и PCA",              True,  "Сева"),
+    ("models",   3, "Стохастические модели GARCH-DCC", True,  "Лёша"),
+    ("pricing",  4, "Оценка стоимости инструментов",   True,  "Лёша"),
+    ("var",      5, "Monte Carlo, VaR и ES",           False, "Егор"),
+    ("backtest", 6, "Бэктестинг",                      False, "Вика"),
+    ("tests",    7, "Статистические тесты VaR",        False, "Настя"),
 ]
 
 
@@ -40,29 +37,61 @@ def _run_data() -> None:
     pipeline.run()
 
 
+def _run_factors() -> None:
+    from risk_factors import pipeline
+    pipeline.run()
+
+
+def _run_models() -> None:
+    from models import pipeline
+    pipeline.run()
+
+
+def _run_pricing() -> None:
+    from pricing import pipeline
+    pipeline.run()
+
+
 # Готовые этапы. Ключ это функция запуска. Остальные пока не реализованы.
 STAGE_RUNNERS = {
     "data": _run_data,
+    "factors": _run_factors,
+    "models": _run_models,
+    "pricing": _run_pricing,
 }
 
 
-def _not_ready(key: str) -> None:
-    """Сообщает, что этап ещё не перенесён в модули."""
-    print(f"  Этап '{key}' пока не реализован.")
-    print("  Что и в каком порядке делаем, смотри в refactor-plan.md.")
+def _stage(key: str):
+    """Находит описание этапа по ключу."""
+    return next((s for s in STAGES if s[0] == key), None)
+
+
+def _print_intro() -> None:
+    """Короткая шапка перед запуском: что считаем и с какими настройками."""
+    print("Оценка рыночного риска портфеля из ОФЗ, акций и валюты")
+    print(f"Состав портфеля: {len(C.PORTFOLIO_BONDS)} ОФЗ, "
+          f"{len(C.PORTFOLIO_STOCKS)} акций, валюта USD и EUR")
+    print(f"Дата оценки риска: {C.EVAL_DATE}")
+    print(f"Seed для воспроизводимости: {C.RANDOM_SEED}")
+
+
+def _not_ready(num: int) -> None:
+    """Сообщает, что этап ещё не реализован."""
+    print(f"  Этап {num} пока не реализован, подробности в README.")
 
 
 def run_stage(key: str) -> None:
     """Запускает один этап по ключу."""
-    info = next((s for s in STAGES if s[0] == key), None)
+    info = _stage(key)
     if info is None:
-        raise SystemExit(f"Неизвестный этап: {key}. Доступные: {[s[0] for s in STAGES]}")
-
-    print(f"\n=== {info[1]}  {info[2]}  ({info[4]}) ===")
+        raise SystemExit(f"Неизвестный этап: {key}. "
+                         f"Доступные: {[s[0] for s in STAGES]}")
+    _, num, desc, _, who = info
+    print(f"\nЭтап {num}. {desc} ({who})")
 
     runner = STAGE_RUNNERS.get(key)
     if runner is None:
-        _not_ready(key)
+        _not_ready(num)
     else:
         runner()
 
@@ -71,34 +100,37 @@ def run_all() -> None:
     """Прогоняет все этапы по порядку."""
     for key, *_ in STAGES:
         run_stage(key)
+    done = sum(1 for s in STAGES if s[3])
+    print(f"\nГотовые этапы отработали ({done} из {len(STAGES)}). "
+          "Результаты в папке data/, что ещё в работе смотри в README.")
 
 
 def print_list() -> None:
     """Печатает список этапов и их статус."""
-    print("Этапы пайплайна:")
-    for key, point, desc, ready, who in STAGES:
-        mark = "готов" if ready else "не готов"
-        print(f"  [{mark:8}] {point}  {key:9} {desc}  ({who})")
+    print("Этапы пайплайна по порядку:")
+    for key, num, desc, ready, who in STAGES:
+        status = "готово" if ready else "в работе"
+        print(f"  {num}  {key:9} {desc:35} {status:9} {who}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Пайплайн оценки рыночного риска")
+    parser = argparse.ArgumentParser(
+        description="Пайплайн оценки рыночного риска портфеля")
     parser.add_argument(
         "--stage",
         choices=[s[0] for s in STAGES] + ["all"],
         default="all",
-        help="какой этап запустить (по умолчанию all)",
+        help="какой этап запустить, по умолчанию весь пайплайн (all)",
     )
-    parser.add_argument("--list", action="store_true", help="показать этапы и статус")
+    parser.add_argument("--list", action="store_true",
+                        help="показать список этапов и их статус")
     args = parser.parse_args()
-
-    # Фиксируем seed для воспроизводимости (требование задания).
-    print(f"RANDOM_SEED = {C.RANDOM_SEED}")
 
     if args.list:
         print_list()
         return
 
+    _print_intro()
     if args.stage == "all":
         run_all()
     else:

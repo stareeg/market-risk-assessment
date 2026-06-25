@@ -3,6 +3,7 @@ lectures/
 project_tasks/
 CLAUDE.md
 .claude/
+refactor-plan.md
 
 # Временные .py скрипты
 temp/
