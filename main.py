@@ -24,7 +24,7 @@ STAGES = [
     ("factors",  2, "Риск-факторы и PCA",              True,  "Сева"),
     ("models",   3, "Стохастические модели GARCH-DCC", True,  "Лёша"),
     ("pricing",  4, "Оценка стоимости инструментов",   True,  "Лёша"),
-    ("var",      5, "Monte Carlo, VaR и ES",           False, "Егор"),
+    ("var",      5, "Monte Carlo, VaR и ES",           True,  "Егор"),
     ("backtest", 6, "Бэктестинг",                      False, "Вика"),
     ("tests",    7, "Статистические тесты VaR",        False, "Настя"),
 ]
@@ -52,12 +52,18 @@ def _run_pricing() -> None:
     pipeline.run()
 
 
+def _run_var() -> None:
+    from var_engine import pipeline
+    pipeline.run()
+
+
 # Готовые этапы. Ключ это функция запуска. Остальные пока не реализованы.
 STAGE_RUNNERS = {
     "data": _run_data,
     "factors": _run_factors,
     "models": _run_models,
     "pricing": _run_pricing,
+    "var": _run_var,
 }
 
 
