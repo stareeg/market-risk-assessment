@@ -25,8 +25,8 @@ STAGES = [
     ("models",   3, "Стохастические модели GARCH-DCC", True,  "Лёша"),
     ("pricing",  4, "Оценка стоимости инструментов",   True,  "Лёша"),
     ("var",      5, "Monte Carlo, VaR и ES",           True,  "Егор"),
-    ("backtest", 6, "Бэктестинг",                      False, "Вика"),
-    ("tests",    7, "Статистические тесты VaR",        False, "Настя"),
+    ("backtest", 6, "Бэктестинг",                      True,  "Вика"),
+    ("tests",    7, "Статистические тесты VaR",        True,  "Настя"),
 ]
 
 
@@ -57,6 +57,16 @@ def _run_var() -> None:
     pipeline.run()
 
 
+def _run_backtest() -> None:
+    from backtesting import backtest
+    backtest.run()
+
+
+def _run_tests() -> None:
+    from stat_tests import tests
+    tests.run()
+
+
 # Готовые этапы. Ключ это функция запуска. Остальные пока не реализованы.
 STAGE_RUNNERS = {
     "data": _run_data,
@@ -64,6 +74,8 @@ STAGE_RUNNERS = {
     "models": _run_models,
     "pricing": _run_pricing,
     "var": _run_var,
+    "backtest": _run_backtest,
+    "tests": _run_tests,
 }
 
 

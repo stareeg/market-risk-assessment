@@ -149,9 +149,14 @@ def _draw_correlated_t(R: np.ndarray, nu: np.ndarray) -> np.ndarray:
 
 def simulate(data_dir: str | Path | None = None,
              n_sim: int = N_SIM, horizon: int = HORIZON,
-             seed: int = C.RANDOM_SEED):
+             seed: int = C.RANDOM_SEED, as_of: str | pd.Timestamp | None = None):
     """
     Симулирует приращения факторов и собственные шоки акций.
+
+    as_of это дата, на которую делаем прогноз (по умолчанию дата оценки из config).
+    Начальное состояние моделей восстанавливаем по истории строго до неё. В
+    бэктестинге (пункт 6) сюда подставляют любой торговый день, поэтому параметр
+    вынесен наружу.
 
     Возвращает:
       incr   приращения 8 факторов, массив (n_sim, horizon, 8),
@@ -159,10 +164,11 @@ def simulate(data_dir: str | Path | None = None,
       info   словарь со служебными данными (порядок факторов, q_bar и т.п.).
     """
     data_dir = Path(data_dir) if data_dir is not None else C.DATA_DIR
+    as_of = pd.Timestamp(as_of) if as_of is not None else pd.Timestamp(C.EVAL_DATE)
 
     rf_full, gp, theta1, theta2, q_bar, factor_order = load_models(data_dir)
-    # История строго до даты оценки, иначе заглянем в будущее.
-    rf = rf_full.loc[:pd.Timestamp(C.EVAL_DATE)]
+    # История строго до даты прогноза, иначе заглянем в будущее.
+    rf = rf_full.loc[:as_of]
 
     h1, Q1, f_last, _ = filter_state(rf, gp, theta1, theta2, q_bar)
 
@@ -204,7 +210,8 @@ def simulate(data_dir: str | Path | None = None,
     idio = _draw_idiosyncratic(data_dir, n_sim, horizon)
 
     info = {"factor_order": factor_order, "q_bar": q_bar,
-            "theta1": theta1, "theta2": theta2, "n_sim": n_sim, "horizon": horizon}
+            "theta1": theta1, "theta2": theta2, "n_sim": n_sim, "horizon": horizon,
+            "as_of": as_of}
     return incr, idio, info
 
 

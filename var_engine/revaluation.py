@@ -141,35 +141,12 @@ def fx_returns(fx_usd_incr: np.ndarray, fx_eur_incr: np.ndarray) -> np.ndarray:
     return np.stack([r_usd, r_eur], axis=-1)
 
 
-def instrument_returns(incr: np.ndarray, idio: np.ndarray, info: dict,
-                       data_dir: str | Path | None = None):
+def portfolio_layout():
     """
-    Собирает дневные доходности всех инструментов портфеля.
-
-    Возвращает:
-      ret        (n_sim, horizon, 17): 5 ОФЗ, 10 акций, USD, EUR,
-      notional   рублёвый объём по каждому инструменту (17,),
-      groups     индексы инструментов по подпортфелям,
-      labels     подписи инструментов.
+    Постоянная раскладка портфеля: рублёвый объём по каждому инструменту, индексы
+    подпортфелей и подписи. От даты не зависит, поэтому вынесено отдельно (этим же
+    пользуется бэктестинг в пункте 6).
     """
-    data_dir = Path(data_dir) if data_dir is not None else C.DATA_DIR
-    eval_date = pd.Timestamp(C.EVAL_DATE)
-    order = info["factor_order"]
-
-    rate_idx = [order.index(n) for n in RATE_NAMES]
-    eq_idx = [order.index(n) for n in EQ_NAMES]
-    usd_idx = order.index("FX_USD")
-    eur_idx = order.index("FX_EUR")
-
-    base_curve = pd.read_parquet(data_dir / "base_curve.parquet")
-    base_node_yields = base_curve["yield_pct"].values
-
-    r_bonds = bond_returns(incr[:, :, rate_idx], data_dir, eval_date, base_node_yields)
-    r_stocks = stock_returns(incr[:, :, eq_idx], idio, data_dir)
-    r_fx = fx_returns(incr[:, :, usd_idx], incr[:, :, eur_idx])
-
-    ret = np.concatenate([r_bonds, r_stocks, r_fx], axis=-1)
-
     notional = np.array(
         [C.BOND_NOTIONAL_RUB] * len(C.PORTFOLIO_BONDS)
         + [C.STOCK_NOTIONAL_RUB] * len(C.PORTFOLIO_STOCKS)
@@ -187,4 +164,40 @@ def instrument_returns(incr: np.ndarray, idio: np.ndarray, info: dict,
     labels = (list(C.PORTFOLIO_BONDS)
               + list(C.PORTFOLIO_STOCKS)
               + ["USD", "EUR"])
+    return notional, groups, labels
+
+
+def instrument_returns(incr: np.ndarray, idio: np.ndarray, info: dict,
+                       data_dir: str | Path | None = None):
+    """
+    Собирает дневные доходности всех инструментов портфеля.
+
+    Возвращает:
+      ret        (n_sim, horizon, 17): 5 ОФЗ, 10 акций, USD, EUR,
+      notional   рублёвый объём по каждому инструменту (17,),
+      groups     индексы инструментов по подпортфелям,
+      labels     подписи инструментов.
+    """
+    data_dir = Path(data_dir) if data_dir is not None else C.DATA_DIR
+    # Дату прогноза берём из симуляции (по умолчанию дата оценки из config).
+    # В бэктестинге сюда приходит произвольный торговый день 2025 года.
+    eval_date = pd.Timestamp(info.get("as_of", C.EVAL_DATE))
+    order = info["factor_order"]
+
+    rate_idx = [order.index(n) for n in RATE_NAMES]
+    eq_idx = [order.index(n) for n in EQ_NAMES]
+    usd_idx = order.index("FX_USD")
+    eur_idx = order.index("FX_EUR")
+
+    # Кривая ЦБ на дату прогноза. На дату оценки совпадает с base_curve.parquet,
+    # для остальных дней берёт исторический срез (нужно для бэктестинга).
+    base_node_yields = CV.load_base_curve(data_dir, eval_date).values
+
+    r_bonds = bond_returns(incr[:, :, rate_idx], data_dir, eval_date, base_node_yields)
+    r_stocks = stock_returns(incr[:, :, eq_idx], idio, data_dir)
+    r_fx = fx_returns(incr[:, :, usd_idx], incr[:, :, eur_idx])
+
+    ret = np.concatenate([r_bonds, r_stocks, r_fx], axis=-1)
+
+    notional, groups, labels = portfolio_layout()
     return ret, notional, groups, labels
